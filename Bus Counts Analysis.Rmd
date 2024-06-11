@@ -1,0 +1,259 @@
+---
+title: "Bus Count Analysis"
+output: html_document
+date: "2024-06-11"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(readxl)
+library(dplyr)
+library(lubridate)
+```
+
+```{r, include=FALSE}
+# APC data
+jan_APC <- read_xlsx('January.xlsx', sheet = 'clean_passengerCountDetailDump_', )
+feb_APC <- read_xlsx('February.xlsx', sheet = 'passengerCountDetailDump_Feb202')
+mar_APC <- read_xlsx('March.xlsx', sheet = 'passengerCountDetailDump_Mar202')
+
+# Driver estimations data
+jan_DRE <- read_xlsx('January.xlsx', sheet = 'Driver Estimations')
+feb_DRE <- read_xlsx('February.xlsx', sheet = 'Driver Estimations')
+mar_DRE <- read_xlsx('March.xlsx', sheet = 'Driver Estimations')
+  
+# Trip codes
+trips <- read.csv('trips.csv')
+```
+
+## Clean driver estimation data
+
+Some N/A observations are valid, such as inbound only or tripper trips, but they're complicating this process unnecessarily so they're going to be removed.
+
+```{r}
+# Filter out correct buses, remove non-regular lines, remove N/A observations
+jan_DRE <- jan_DRE %>%
+  filter(Vehicle %in% c(4025, 4027, 4028, 4029, 4030, 4031)) %>%
+  filter(grepl("Regular", Line...11, fixed = TRUE)) %>%
+  filter(!is.na(In) & !is.na(Out))
+feb_DRE <- feb_DRE %>%
+  filter(Vehicle %in% c(4027, 4030, 4031)) %>%
+  filter(grepl("Regular", Line...11, fixed = TRUE)) %>%
+  filter(!is.na(In) & !is.na(Out))
+mar_DRE <- mar_DRE %>%
+  filter(Vehicle %in% c(4027, 4031)) %>%
+  filter(grepl("Regular", Line...11, fixed = TRUE)) %>%
+  filter(!is.na(In) & !is.na(Out))
+
+# Format datetime data as simple times
+jan_DRE$`Start Time (Scheduled)` <- format(as.POSIXct(jan_DRE$`Start Time (Scheduled)`), format = '%H%M')
+jan_DRE$`End Time (Scheduled)` <- format(as.POSIXct(jan_DRE$`End Time (Scheduled)`), format = '%H%M')
+
+feb_DRE$`Start Time (Scheduled)` <- format(as.POSIXct(feb_DRE$`Start Time (Scheduled)`), format = '%H%M')
+feb_DRE$`End Time (Scheduled)` <- format(as.POSIXct(feb_DRE$`End Time (Scheduled)`), format = '%H%M')
+
+mar_DRE$`Start Time (Scheduled)` <- format(as.POSIXct(mar_DRE$`Start Time (Scheduled)`), format = '%H%M')
+mar_DRE$`End Time (Scheduled)` <- format(as.POSIXct(mar_DRE$`End Time (Scheduled)`), format = '%H%M')
+```
+
+## Split driver estimation data to inbound and outbound trips
+
+```{r}
+split_trips <- function(data) {
+  output <- data.frame(matrix(ncol = 25, nrow = 0))
+  colnames(output) <- c("Vehicle","Date","Time","Pay Time","Direction","WC",
+                    "Passengers","Line...11","Column","Line...13","Total",
+                    "Miles","Veh Hrs...16","Adj Arr","Adj Dep","Trips",
+                    "Late_Early","TravTime","CalcTime1","CalcTime2",
+                    "Veh Hrs...24","Capac","Crowd","Crwd#","DNR")
+  
+  for (i in 1:nrow(data)) {
+    # Gather existing info
+    new_row <- data[i, !(colnames(data) %in% c('Start Time (Scheduled)', 'End Time (Scheduled)', 'In', 'Out'))]
+    
+    # Outbound
+    if (!is.na(data$Out[i])) {
+      new_row$Time <- data$`End Time (Scheduled)`[i]
+      new_row$Passengers <- data$Out[i]
+      new_row$Direction <- 'outbound'
+      output <- rbind(output, new_row)
+    }
+    
+    # Inbound
+    if (!is.na(data$In[i])) {
+      new_row$Time <- data$`Start Time (Scheduled)`[i]
+      new_row$Passengers <- data$In[i]
+      new_row$Direction <- 'inbound'
+      output <- rbind(output, new_row)
+    }
+  }
+  
+  return(output)
+}
+
+# Split up trips and update dataset
+jan_DRE <- split_trips(jan_DRE)
+feb_DRE <- split_trips(feb_DRE)
+mar_DRE <- split_trips(mar_DRE)
+```
+
+## Attribute trips to driver estimations
+
+``` {r}
+# Making trip codes
+trip_code <- function(row) {
+  
+  # Search for day of week and initialize service code for it
+  if (wday(row$Date) == 4) {
+    service_id <- 3
+  } else if (wday(row$Date) == 6) {
+    service_id <- 5
+  } else if (wday(row$Date) == 1 | wday(row$Date) == 7) {
+    service_id <- 10
+  } else {
+    service_id <- 1
+  }
+
+  # P or Q
+  if (row$Line...13 == 'P' | row$Line...13 == 'Q') {
+    prelim_code <- paste(row$Line...13,
+                         service_id,
+                         row$Time,
+                         sep = '_')
+  }
+  
+  # Any other route
+  else {
+    prelim_code <- paste(row$Line...13,
+                         service_id,
+                         row$Direction,
+                         row$Time,
+                         sep = '_')
+  }
+  
+  return(prelim_code)
+}
+
+# Assigning trip codes
+find_trip <- function(data) {
+  trip_return <- c()
+  for (i in 1:nrow(data)) {
+    # For winter break trips
+    if (data$Date[i] >= as.POSIXct("2024-01-01",tz = 'UTC')
+        &
+        data$Date[i] <= as.POSIXct("2024-01-05",tz = 'UTC')) {
+      trip_return <- c(trip_return, sub('_','_2',trip_code(data[i,])))
+    }
+
+    # For finals trips
+    else if (data$Date[i] >= as.POSIXct("2024-03-18",tz = 'UTC')
+             &
+             data$Date[i] <= as.POSIXct("2024-03-22",tz = 'UTC')) {
+      trip_return <- c(trip_return, sub('_','_1',trip_code(data[i,])))
+    }
+
+    # For spring break trips
+    else if (data$Date[i] >= as.POSIXct("2024-03-23",tz = 'UTC')
+             &
+             data$Date[i] <= as.POSIXct("2024-03-31",tz = 'UTC')) {
+      trip_return <- c(trip_return, sub('_','_2',trip_code(data[i,])))
+    }
+
+    # For all others
+    else {
+      trip_return <- c(trip_return, trip_code(data[i,]))
+    }
+  }
+  return(trip_return)
+}
+
+# Assign the codes!
+jan_DRE$trip_id <- find_trip(jan_DRE)
+feb_DRE$trip_id <- find_trip(feb_DRE)
+mar_DRE$trip_id <- find_trip(mar_DRE)
+```
+
+## Clean APC data and calculate passenger loads
+```{r}
+# Remove rows where there is no trip ID
+jan_APC <- filter(jan_APC, !is.na(Trip))
+feb_APC <- filter(feb_APC, !is.na(Trip))
+mar_APC <- filter(mar_APC, !is.na(Trip))
+
+# Calculate passenger loads
+passenger_load <- function(data) {
+  output <- data.frame(matrix(ncol = 11, nrow = 0))
+  colnames(output) <- c("# Date","Time","Vehicle","Stop","Stop ID","Route",
+                        "Direction","Trip","Boardings","Deboardings","Load")
+  
+  data$Load <- NA
+  for (date in unique(data$`# Date`)) {
+    date_subset <- data[data$`# Date` == date,]
+    for (vehicle in unique(date_subset$Vehicle)) {
+      vehicle_subset <- date_subset[date_subset$Vehicle == vehicle,]
+      for (trip in unique(vehicle_subset$Trip)) {
+        trip_subset <- vehicle_subset[vehicle_subset$Trip == trip,]
+        trip_subset <- trip_subset[order(as.Date(trip_subset$Time, format="%m/%d/%Y")),]
+        for (i in 1:nrow(trip_subset)) {
+          if (i == 1) {
+            trip_subset$Load[i] <- trip_subset$Boardings[i] - trip_subset$Deboardings[i]
+          } else {
+            trip_subset$Load[i] <- trip_subset$Load[i-1] + trip_subset$Boardings[i] - trip_subset$Deboardings[i]
+          }
+        }
+        output <- rbind(output, trip_subset)
+      }
+    }
+  }
+  return(output)
+}
+
+# Calculate passenger loads
+jan_APC <- passenger_load(jan_APC)
+feb_APC <- passenger_load(feb_APC)
+mar_APC <- passenger_load(mar_APC)
+```
+
+``` {r}
+# Sum boardings and alightings and find max load grouped by date, vehicle, and trip code
+jan_APC.agg <- jan_APC %>%
+  group_by(`# Date`, Vehicle, Trip) %>%
+  summarise(Boardings.tot = sum(Boardings),
+            Deboardings.tot = sum(Deboardings),
+            Max.Load = max(Load))
+feb_APC.agg <- feb_APC %>%
+  group_by(`# Date`, Vehicle, Trip) %>%
+  summarise(Boardings.tot = sum(Boardings),
+            Deboardings.tot = sum(Deboardings),
+            Max.Load = max(Load))
+mar_APC.agg <- mar_APC %>%
+  group_by(`# Date`, Vehicle, Trip) %>%
+  summarise(Boardings.tot = sum(Boardings),
+            Deboardings.tot = sum(Deboardings),
+            Max.Load = max(Load))
+```
+
+## Validate remaining trip codes used in APC and driver estimation data
+
+Just checking which trips that We will have to manually attribute to driver estimations, such as trips with tripper service or service IDs that we don't know of, such as 21.
+
+Much of January is not workable due to missing rows from our data cleaning and the inclusion of winter break, which is hard to attribute to driver estimations because it uses codes not currently existing in the GTFS. All rows that aren't working here will be excluded from the analysis.
+
+
+```{r}
+jan_APC[!(jan_APC$Trip %in% trips$trip_id),]
+feb_APC[!(feb_APC$Trip %in% trips$trip_id),]
+mar_APC[!(mar_APC$Trip %in% trips$trip_id),]
+
+jan_DRE[!(jan_DRE$trip_id %in% trips$trip_id),]
+feb_DRE[!(feb_DRE$trip_id %in% trips$trip_id),]
+mar_DRE[!(mar_DRE$trip_id %in% trips$trip_id),]
+```
+
+## Attribute APC trips to driver estimation trips
+```{r}
+jan <- merge(jan_APC.agg, jan_DRE, by.x = c('# Date', 'Trip'), by.y = c('Date','trip_id'))
+feb <- merge(feb_APC.agg, feb_DRE, by.x = c('# Date', 'Trip'), by.y = c('Date','trip_id'))
+mar <- merge(mar_APC.agg, mar_DRE, by.x = c('# Date', 'Trip'), by.y = c('Date','trip_id'))
+```
+
