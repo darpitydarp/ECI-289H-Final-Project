@@ -241,13 +241,17 @@ Much of January is not workable due to missing rows from our data cleaning and t
 
 
 ```{r}
-jan_APC[!(jan_APC$Trip %in% trips$trip_id),]
-feb_APC[!(feb_APC$Trip %in% trips$trip_id),]
-mar_APC[!(mar_APC$Trip %in% trips$trip_id),]
+# jan_APC[!(jan_APC$Trip %in% trips$trip_id),]
+# feb_APC[!(feb_APC$Trip %in% trips$trip_id),]
+# mar_APC[!(mar_APC$Trip %in% trips$trip_id),]
 
-jan_DRE[!(jan_DRE$trip_id %in% trips$trip_id),]
-feb_DRE[!(feb_DRE$trip_id %in% trips$trip_id),]
-mar_DRE[!(mar_DRE$trip_id %in% trips$trip_id),]
+jan_DRE %>%
+  filter(!(trip_id %in% trips$trip_id)) %>%
+  filter(!grepl("_2", trip_id, fixed = TRUE)) 
+
+# jan_DRE[!(jan_DRE$trip_id %in% trips$trip_id),]
+# feb_DRE[!(feb_DRE$trip_id %in% trips$trip_id),]
+# mar_DRE[!(mar_DRE$trip_id %in% trips$trip_id),]
 ```
 
 ## Attribute APC trips to driver estimation trips
