@@ -9,6 +9,7 @@ knitr::opts_chunk$set(echo = TRUE)
 library(readxl)
 library(dplyr)
 library(lubridate)
+library(ggplot2)
 ```
 
 ```{r, include=FALSE}
@@ -291,5 +292,214 @@ mar_DRE %>%
 jan <- merge(jan_APC.agg, jan_DRE, by.x = c('# Date', 'Trip'), by.y = c('Date','trip_id'))
 feb <- merge(feb_APC.agg, feb_DRE, by.x = c('# Date', 'Trip'), by.y = c('Date','trip_id'))
 mar <- merge(mar_APC.agg, mar_DRE, by.x = c('# Date', 'Trip'), by.y = c('Date','trip_id'))
+
+# Combine dataset because why not
+combined <- rbind(mar, rbind(jan, feb))
+```
+
+## Analysis
+
+Calculate differences between APC max load and passengers
+
+```{r}
+combined$Diff <- combined$Max.Load - combined$Passengers
+```
+
+Plotting
+
+``` {r, echo=FALSE}
+ggplot() +
+  geom_histogram(data = combined,
+                 aes(x = Diff),
+                 binwidth = 1,
+                 color="black",
+                 fill="white") +
+  geom_vline(aes(xintercept=mean(combined$Diff)),
+            color="blue", linetype="dashed", line_width=2) +
+  xlab("Difference in Max Passenger Load APC vs. Driver Estimation") +
+  ylab("Number of Observations")
+```
+
+## Plots disaggregated by route
+
+```{r, echo=FALSE}
+for (route in unique(combined$Line...13)) {
+  route_subset <- combined %>% filter(Line...13 == route)
+  plot <- ggplot() +
+    geom_histogram(data = route_subset,
+                   aes(x = Diff),
+                   binwidth = 5,
+                   color="black",
+                   fill="white") + 
+    geom_vline(aes(xintercept=mean(route_subset$Diff)),
+               color="blue", linetype="dashed", size=1) +
+    xlab("Difference in Max Passenger Load APC vs. Driver Estimation") +
+    ylab("Number of Observations") +
+    ggtitle(paste('Route', route)) +
+    scale_x_continuous(limits = c(-100, 75),
+                       breaks = c(-100, -75, -50, -25, 0, 25, 50, 75))
+  print(plot)
+}
+```
+
+## Plots disaggregated by buses
+
+```{r, echo=FALSE}
+for (bus in unique(combined$Vehicle.x)) {
+  bus_subset <- combined %>% filter(Vehicle.x == bus)
+  plot <- ggplot() +
+    geom_histogram(data = bus_subset,
+                   aes(x = Diff),
+                   binwidth = 5,
+                   color="black",
+                   fill="white") + 
+    geom_vline(aes(xintercept=mean(bus_subset$Diff)),
+               color="blue", linetype="dashed", size=1) +
+    xlab("Difference in Max Passenger Load APC vs. Driver Estimation") +
+    ylab("Number of Observations") +
+    ggtitle(paste('Bus', bus))+
+    scale_x_continuous(limits = c(-100, 75),
+                       breaks = c(-100, -75, -50, -25, 0, 25, 50, 75))
+  print(plot)
+}
+```
+
+## Disaggregate by service ID
+
+```{r, echo=FALSE}
+# Make service ID column
+combined$service_id <- 0
+for (i in 1:nrow(combined)) {
+  combined$service_id[i] <- as.numeric(strsplit(combined$Trip[i], split = '_', fixed=T)[[1]][2])
+}
+
+# Plot
+for (service in unique(combined$service_id)) {
+  service_subset <- combined %>% filter(service_id == service)
+  plot <- ggplot() +
+    geom_histogram(data = service_subset,
+                   aes(x = Diff),
+                   binwidth = 5,
+                   color="black",
+                   fill="white") + 
+    geom_vline(aes(xintercept=mean(service_subset$Diff)),
+               color="blue", linetype="dashed", size=1) +
+    xlab("Difference in Max Passenger Load APC vs. Driver Estimation") +
+    ylab("Number of Observations") +
+    ggtitle(paste('Service ID', service)) +
+    scale_x_continuous(limits = c(-100, 75),
+                       breaks = c(-100, -75, -50, -25, 0, 25, 50, 75))
+  print(plot)
+}
+```
+
+## Disaggregate by AM vs. PM
+
+```{r, echo=FALSE}
+AM_subset <- combined %>% filter(as.numeric(Time) < 1200)
+plot <- ggplot() +
+    geom_histogram(data = AM_subset,
+                   aes(x = Diff),
+                   binwidth = 5,
+                   color="black",
+                   fill="white") + 
+    geom_vline(aes(xintercept=mean(AM_subset$Diff)),
+               color="blue", linetype="dashed", size=1) +
+    xlab("Difference in Max Passenger Load APC vs. Driver Estimation") +
+    ylab("Number of Observations") +
+    ggtitle('AM Observations') +
+    scale_x_continuous(limits = c(-100, 75),
+                       breaks = c(-100, -75, -50, -25, 0, 25, 50, 75)) +
+    scale_y_continuous(limits = c(0, 275),
+                       breaks = c(0, 100, 200))
+print(plot)
+
+PM_subset <- combined %>% filter(as.numeric(Time) > 1200)
+plot <- ggplot() +
+    geom_histogram(data = PM_subset,
+                   aes(x = Diff),
+                   binwidth = 5,
+                   color="black",
+                   fill="white") + 
+    geom_vline(aes(xintercept=mean(PM_subset$Diff)),
+               color="blue", linetype="dashed", size=1) +
+    xlab("Difference in Max Passenger Load APC vs. Driver Estimation") +
+    ylab("Number of Observations") +
+    ggtitle('PM Observations') +
+    scale_x_continuous(limits = c(-100, 75),
+                       breaks = c(-100, -75, -50, -25, 0, 25, 50, 75)) +
+    scale_y_continuous(limits = c(0, 275),
+                       breaks = c(0, 100, 200))
+print(plot)
+```
+
+## Disaggregate by inbound vs. outbound
+
+```{r}
+outbound_subset <- combined %>% filter(Direction == 'outbound')
+plot <- ggplot() +
+    geom_histogram(data = outbound_subset,
+                   aes(x = Diff),
+                   binwidth = 1,
+                   color="black",
+                   fill="white") + 
+    geom_vline(aes(xintercept=mean(outbound_subset$Diff)),
+               color="blue", linetype="dashed", size=1) +
+    xlab("Difference in Max Passenger Load APC vs. Driver Estimation") +
+    ylab("Number of Observations") +
+    ggtitle('Outbound Observations') +
+    scale_x_continuous(limits = c(-100, 75),
+                       breaks = c(-100, -75, -50, -25, 0, 25, 50, 75)) +
+    scale_y_continuous(limits = c(0, 100),
+                       breaks = c(0, 20, 40, 60, 80, 100))
+print(plot)
+
+inbound_subset <- combined %>% filter(Direction == 'inbound')
+plot <- ggplot() +
+    geom_histogram(data = inbound_subset,
+                   aes(x = Diff),
+                   binwidth = 1,
+                   color="black",
+                   fill="white") + 
+    geom_vline(aes(xintercept=mean(inbound_subset$Diff)),
+               color="blue", linetype="dashed", size=1) +
+    xlab("Difference in Max Passenger Load APC vs. Driver Estimation") +
+    ylab("Number of Observations") +
+    ggtitle('Inbound Observations') +
+    scale_x_continuous(limits = c(-100, 75),
+                       breaks = c(-100, -75, -50, -25, 0, 25, 50, 75)) +
+    scale_y_continuous(limits = c(0, 100),
+                       breaks = c(0, 20, 40, 60, 80, 100))
+print(plot)
+```
+
+
+## Disaggregate by driver estimate buckets
+
+```{r}
+# First make quintiles to disaggregate by
+quintile <- quantile(combined$Passengers, probs = seq(0, 1, 0.2))
+
+
+# First make histogram to decide buckets
+for (i in 2:length(quintile)) {
+  quintile_subset <- combined %>% filter(Passengers >= quintile[i-1] & Passengers <= quintile[i])
+  plot <- ggplot() +
+    geom_histogram(data = quintile_subset,
+                   aes(x = Diff),
+                   binwidth = 1,
+                   color="black",
+                   fill="white") + 
+    geom_vline(aes(xintercept=mean(quintile_subset$Diff)),
+               color="blue", linetype="dashed", size=1) +
+    xlab("Difference in Max Passenger Load APC vs. Driver Estimation") +
+    ylab("Number of Observations") +
+    ggtitle(paste('Observations with max load between', quintile[i-1], 'and', quintile[i])) +
+    scale_x_continuous(limits = c(-100, 75),
+                       breaks = c(-100, -75, -50, -25, 0, 25, 50, 75)) +
+    scale_y_continuous(limits = c(0, 50),
+                       breaks = c(0, 10, 20, 30, 40, 50))
+  print(plot)
+}
 ```
 
